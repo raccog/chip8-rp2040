@@ -89,6 +89,7 @@ typedef struct {
     byte delay;
     byte sound;
     bool key_buffer[KEY_COUNT];
+    uint64_t key_last_irq[KEY_COUNT];
     bool keys[KEY_COUNT];
     bool should_draw;
     uint64_t last_cycle_time;
@@ -413,7 +414,17 @@ void processor_decrement_timers(Processor *processor) {
 }
 
 void processor_update_keys(Processor *processor) {
-    memcpy(processor->key_buffer, processor->keys, KEY_COUNT);
+    gpio_set_irq_enabled(4, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
+    if (gpio_get(4) != processor->key_buffer[4]) {
+        processor->key_buffer[4] = gpio_get(4);
+        if (processor->key_buffer[4]) {
+            printf("Key pressed: %i\n", 4);
+        } else {
+            printf("Key released: %i\n", 4);
+        }
+    }
+    gpio_set_irq_enabled(4, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+    memcpy(processor->keys, processor->key_buffer, KEY_COUNT);
 }
 
 void processor_run_cycle(Processor *processor) {
@@ -425,6 +436,20 @@ void processor_run_cycle(Processor *processor) {
 #ifdef CHIP8_DEBUG
     printf("Instruction ran at 0x%x: 0x%x\n", processor->PC - 2, instruction);
 #endif
+}
+
+Processor processor;
+
+void gpio_irq_callback(uint gpio, uint32_t events) {
+    gpio_set_irq_enabled(gpio, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
+    if (events == GPIO_IRQ_EDGE_RISE) {
+        printf("Key pressed: %i\n", gpio);
+        processor.key_buffer[gpio] = true;
+    } else if (events == GPIO_IRQ_EDGE_FALL) {
+        printf("Key released: %i\n", gpio);
+        processor.key_buffer[gpio] = false;
+    }
+    gpio_set_irq_enabled(gpio, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 }
 
 int main() {
@@ -440,13 +465,23 @@ int main() {
     gpio_pull_up(2);
     gpio_pull_up(3);
 
+    gpio_init(4);
+    gpio_set_dir(4, GPIO_IN);
+    gpio_pull_down(4);
+    gpio_set_irq_enabled_with_callback(4, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_irq_callback);
+
     SSD1306 ssd;
     ssd1306_init(&ssd, 0x3c, i2c1, BLACK);
     ssd1306_set_full_rotation(&ssd, true);
     printf("Screen initialized\n");
 
-    Processor processor = processor_init();
+    processor = processor_init();
     printf("Processor initialized\n");
+
+    while (true) {
+        processor_update_keys(&processor);
+        sleep_us(CLOCK_CYCLE_LENGTH);
+    }
 
 /*
     RomList metadata = read_metadata_uart();

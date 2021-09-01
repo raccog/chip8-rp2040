@@ -77,6 +77,9 @@ typedef uint64_t qword;
 
 const uint8_t *flash_target_contents = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
 
+const uint8_t GPIO_KEYS[] = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+const uint8_t GPIO_KEY_MAP[] = {0, 0, 0, 0, 0xa, 0x0, 0x7, 0x8, 0x4, 0x5, 0x1, 0x2, 0x3, 0xc, 0x6, 0xd, 0x9, 0xe, 0xb, 0xf};
+
 typedef struct {
     byte memory[MEMORY_SIZE];
     byte display[DISPLAY_SIZE];
@@ -414,17 +417,17 @@ void processor_decrement_timers(Processor *processor) {
 }
 
 void processor_update_keys(Processor *processor) {
-    gpio_set_irq_enabled(4, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
-    if (gpio_get(4) != processor->key_buffer[4]) {
-        processor->key_buffer[4] = gpio_get(4);
-        if (processor->key_buffer[4]) {
-            printf("Key pressed: %i\n", 4);
-        } else {
-            printf("Key released: %i\n", 4);
+    for (uint i = 0; i < KEY_COUNT; ++i) gpio_set_irq_enabled(GPIO_KEYS[i], GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
+    for (uint i = 0; i < KEY_COUNT; ++i) {
+        uint gpio = GPIO_KEYS[i];
+        uint key = GPIO_KEY_MAP[gpio];
+        uint gpio_state = gpio_get(gpio);
+        if (gpio_state != processor->key_buffer[key]) {
+            processor->key_buffer[key] = gpio_state;
         }
     }
-    gpio_set_irq_enabled(4, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
     memcpy(processor->keys, processor->key_buffer, KEY_COUNT);
+    for (uint i = 0; i < KEY_COUNT; ++i) gpio_set_irq_enabled(GPIO_KEYS[i], GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 }
 
 void processor_run_cycle(Processor *processor) {
@@ -442,12 +445,11 @@ Processor processor;
 
 void gpio_irq_callback(uint gpio, uint32_t events) {
     gpio_set_irq_enabled(gpio, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
+    uint key = GPIO_KEY_MAP[gpio];
     if (events == GPIO_IRQ_EDGE_RISE) {
-        printf("Key pressed: %i\n", gpio);
-        processor.key_buffer[gpio] = true;
+        processor.key_buffer[key] = true;
     } else if (events == GPIO_IRQ_EDGE_FALL) {
-        printf("Key released: %i\n", gpio);
-        processor.key_buffer[gpio] = false;
+        processor.key_buffer[key] = false;
     }
     gpio_set_irq_enabled(gpio, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 }
@@ -465,10 +467,13 @@ int main() {
     gpio_pull_up(2);
     gpio_pull_up(3);
 
-    gpio_init(4);
-    gpio_set_dir(4, GPIO_IN);
-    gpio_pull_down(4);
-    gpio_set_irq_enabled_with_callback(4, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_irq_callback);
+    for (size_t i = 0; i < KEY_COUNT; ++i) {
+        uint gpio = GPIO_KEYS[i];
+        gpio_init(gpio);
+        gpio_set_dir(gpio, GPIO_IN);
+        gpio_pull_down(gpio);
+        gpio_set_irq_enabled_with_callback(gpio, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_irq_callback);
+    }
 
     SSD1306 ssd;
     ssd1306_init(&ssd, 0x3c, i2c1, BLACK);

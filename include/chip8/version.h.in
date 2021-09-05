@@ -1,0 +1,9 @@
+#ifndef __CHIP8_VERSION_H__
+#define __CHIP8_VERSION_H__
+
+#define chip8_VERSION_MAJOR @chip8_VERSION_MAJOR@
+#define chip8_VERSION_MINOR @chip8_VERSION_MINOR@
+#define chip8_VERSION_PATCH @chip8_VERSION_PATCH@
+#define chip8_VERSION "@chip8_VERSION@"
+
+#endif

@@ -15,7 +15,7 @@
 #define DISPLAY_HEIGHT 32
 #define DISPLAY_SIZE DISPLAY_WIDTH * DISPLAY_HEIGHT
 
-#define ONE_HERTZ 1000000
+#define ONE_HERTZ 1000000 / 60
 #define CLOCK_CYCLE_LENGTH 2000
 
 #define ROM_START 0x200
@@ -36,6 +36,7 @@
 
 #define VX processor->V[get_X(instruction)]
 #define VY processor->V[get_Y(instruction)]
+#define VF processor->V[0xf]
 
 typedef uint8_t byte;
 typedef uint16_t word;
@@ -289,18 +290,19 @@ word processor_next_instruction(chip8_processor_t *processor) {
 
 bool processor_update_pixel(chip8_processor_t *processor, word instruction, byte x, byte y, byte pixel) {
     size_t idx = VX + x + VY / 8 * DISPLAY_WIDTH;
-    bool collision = ((processor->display[idx] >> y) & 0x1 == pixel);
-    processor->display[idx] &= ~(0x1 << y);
-    processor->display[idx] |= (uint8_t)collision << y;
+    uint8_t current_pixel = (processor->display[idx] >> y) & 0x1;
+    uint8_t new_pixel = pixel ^ current_pixel;
+
+    processor->display[idx] ^= pixel << y;
 
     for (byte i = 0; i < 2; ++i) {
         const size_t idx = (VX + x) * 2 + i + (VY + y) / 4 * DISPLAY_WIDTH * 2;
         const byte byte_shift = (VY + y) % 4 * 2;
-        processor->full_display[idx] &= ~(0x3 << byte_shift);
+        //processor->full_display[idx] &= ~(0x3 << byte_shift);
         processor->full_display[idx] |= ((pixel << 1) | pixel) << byte_shift;
     }
 
-    return collision;
+    return (pixel == 0x1 && current_pixel == 0x1);
 }
 
 bool processor_get_key_pressed(chip8_processor_t *processor, uint8_t *key) {
@@ -333,6 +335,7 @@ void processor_run_instruction(chip8_processor_t *processor, word instruction) {
     switch (get_opcode(instruction)) {
         case CLEAR_SCREEN:
             processor_clear_displays(processor);
+            processor->should_draw = true;
             break;
         case RETURN:
             --processor->SP;
@@ -374,18 +377,23 @@ void processor_run_instruction(chip8_processor_t *processor, word instruction) {
             VX ^= VY;
             break;
         case VX_ADD_VY:
-            VX += VY;
+            VF = (uint8_t)(256 - VX <= VY);
+            VX = (uint8_t)((uint16_t)VX + VY);
             break;
         case VX_SUB_VY:
-            VX -= VY;
+            VF = (uint8_t)(VX < VY);
+            VX = (uint8_t)((uint16_t)VX - VY);
             break;
         case VX_SHIFT_RIGHT:
+            VF = VX & 0x1;
             VX >>= VY;
             break;
         case VY_SUB_VX:
-            VY -= VX;
+            VF = (uint8_t)(VY < VX);
+            VY = (uint8_t)((uint16_t)VY - VX);
             break;
         case VX_SHIFT_LEFT:
+            VF = VX >> 7;
             VX <<= VY;
             break;
         case SKIP_NEQ_VY:
@@ -401,10 +409,11 @@ void processor_run_instruction(chip8_processor_t *processor, word instruction) {
             VX = get_NN(instruction) & (rand() % 0xff);
             break;
         case DRAW:
+            VF = 0x0;
             for (byte y = 0; y < get_N(instruction); ++y) {
                 for (byte x = 0; x < 8; ++x) {
                     const byte pixel = (processor->memory[processor->I + y] >> (7 - x)) & 0x1;
-                    processor_update_pixel(processor, instruction, x, y, pixel);
+                    if (processor_update_pixel(processor, instruction, x, y, pixel)) VF = 0x1;
                 }
             }
             processor->should_draw = true;
@@ -515,7 +524,7 @@ int main() {
     gpio_pull_down(20);
     printf("Keys initialized\n");
 
-    SSD1306 ssd;
+    ssd1306_state_t ssd;
     ssd1306_init(&ssd, 0x3c, i2c1, BLACK);
     ssd1306_set_full_rotation(&ssd, true);
     printf("Screen (SSD1306) initialized\n");
